@@ -1,6 +1,6 @@
 import os
 import json
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
@@ -10,6 +10,16 @@ import pytz
 BITRIX24_APP_TOKEN = "ijtf0dz352qh5t0ganhowoqy66miijxj"
 GOOGLE_ADS_CREDENTIALS_FILE = os.getenv('GOOGLE_ADS_CREDENTIALS_PATH', 'D:/form1/client_secret.json')
 TIMEZONE = pytz.timezone("Europe/London")
+
+
+CONVERSION_ACTIONS = {
+    "Converted Lead": ["DEAL_WON"],
+    "Qualified Lead": [
+        "NEW", "IN_PROGRESS", "INFORMATION_COLLECTION", "AGREEMENT_INVOICE", "INVOICE_PENDING", 
+        "DEAL_LOST", "ANALYZE_FAILURE", "BUDGET_CONSTRAINT", 
+        "HIGHLY_INTERESTED", "QUALIFIED_LEADS_BUDGET_CONSTRAINT", "GOOD_LEAD"
+    ]
+}
 
 @csrf_exempt
 def bitrix24_handler(request):
@@ -35,11 +45,12 @@ def bitrix24_handler(request):
     print(f"Received event: {event}")
     print(f"Data: {details}")
 
-    gclid = details.get('GCLID', None)  
+    gclid = details.get('GCLID', None)
     if not gclid:
         print("GCLID not found in the payload.")
         return JsonResponse({"error": "GCLID not found"}, status=400)
 
+    
     if event in ["ONCRMLEADADD", "ONCRMLEADUPDATE"]:
         lead_id = details.get('FIELDS', {}).get('ID')
         lead_name = details.get('FIELDS', {}).get('TITLE', '')
@@ -48,7 +59,7 @@ def bitrix24_handler(request):
         lead_phone = details.get('FIELDS', {}).get('PHONE', [{}])[0].get('VALUE', '')
         lead_currency = details.get('FIELDS', {}).get('CURRENCY', 'USD')
         lead_value = details.get('FIELDS', {}).get('AMOUNT', 100.0)  
-
+    
         created_time = details.get('FIELDS', {}).get('DATE_CREATE', '')
         if created_time:
             lead_created_time = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")
@@ -56,9 +67,11 @@ def bitrix24_handler(request):
         else:
             lead_created_time = None
 
+
+        print(lead_status,lead_name)
         if lead_id and lead_name:
-        
-            conversion_name = "Qualified Lead" if lead_status != "DEAL_WON" else "Converted Lead"
+            
+            conversion_name = get_conversion_action_name(lead_status)
             send_to_google_ads(
                 entity_type="lead",
                 entity_id=lead_id,
@@ -75,6 +88,7 @@ def bitrix24_handler(request):
         else:
             print("Incomplete lead data received.")
 
+    
     elif event in ["ONCRMDEALADD", "ONCRMDEALUPDATE"]:
         deal_id = details.get('FIELDS', {}).get('ID')
         deal_name = details.get('FIELDS', {}).get('TITLE', '')
@@ -83,8 +97,8 @@ def bitrix24_handler(request):
         deal_currency = details.get('FIELDS', {}).get('CURRENCY', 'USD')
 
         if deal_id and deal_name:
-        
-            conversion_name = "Converted Lead" if deal_status == "DEAL_WON" else "Qualified Lead"
+            
+            conversion_name = get_conversion_action_name(deal_status)
             send_to_google_ads(
                 entity_type="deal",
                 entity_id=deal_id,
@@ -98,6 +112,7 @@ def bitrix24_handler(request):
         else:
             print("Incomplete deal data received.")
 
+    
     elif event in ["ONCRMLEADDELETE"]:
         lead_id = details.get('FIELDS', {}).get('ID')
         if lead_id:
@@ -122,6 +137,12 @@ def bitrix24_handler(request):
 
     return JsonResponse({"status": "success"})
 
+def get_conversion_action_name(status):
+    
+    for conversion_action, stages in CONVERSION_ACTIONS.items():
+        if status in stages:
+            return conversion_action
+    return None
 
 def send_to_google_ads(entity_type, entity_id, entity_name, entity_status=None, gclid=None, 
                        conversion_name=None, conversion_value=None, currency_code=None, 
@@ -157,7 +178,6 @@ def send_to_google_ads(entity_type, entity_id, entity_name, entity_status=None, 
         print(f"Google Ads API Error: {ex}")
     except Exception as e:
         print(f"Unexpected error: {e}")
-
 
 def delete_from_google_ads(entity_type, entity_id, gclid=None):
     client = GoogleAdsClient.load_from_storage(GOOGLE_ADS_CREDENTIALS_FILE)
