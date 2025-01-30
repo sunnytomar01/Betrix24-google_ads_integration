@@ -11,13 +11,12 @@ BITRIX24_APP_TOKEN = "ijtf0dz352qh5t0ganhowoqy66miijxj"
 GOOGLE_ADS_CREDENTIALS_FILE = os.getenv('GOOGLE_ADS_CREDENTIALS_PATH', 'D:/form1/client_secret.json')
 TIMEZONE = pytz.timezone("Europe/London")
 
-
 CONVERSION_ACTIONS = {
-    "Converted Lead": ["DEAL_WON"],
-    "Qualified Lead": [
-        "NEW", "IN_PROGRESS", "INFORMATION_COLLECTION", "AGREEMENT_INVOICE", "INVOICE_PENDING", 
-        "DEAL_LOST", "ANALYZE_FAILURE", "BUDGET_CONSTRAINT", 
-        "HIGHLY_INTERESTED", "QUALIFIED_LEADS_BUDGET_CONSTRAINT", "GOOD_LEAD"
+    "Converted Leads": ["DEAL_WON"],
+    "Qualified Leads": [
+        "NEW", "IN_PROGRESS", "INFORMATION_COLLECTION", "AGREEMENT_INVOICE",
+        "INVOICE_PENDING", "DEAL_LOST", "ANALYZE_FAILURE", "DEAL_BUDGET_CONSTRAINT",
+        "HIGHLY_INTERESTED", "LEAD_BUDGET_CONSTRAINT", "GOOD_LEAD"
     ]
 }
 
@@ -50,16 +49,16 @@ def bitrix24_handler(request):
         print("GCLID not found in the payload.")
         return JsonResponse({"error": "GCLID not found"}, status=400)
 
-    
     if event in ["ONCRMLEADADD", "ONCRMLEADUPDATE"]:
         lead_id = details.get('FIELDS', {}).get('ID')
         lead_name = details.get('FIELDS', {}).get('TITLE', '')
         lead_status = details.get('FIELDS', {}).get('STATUS', '')
+        lead_status = "LEAD_BUDGET_CONSTRAINT" if lead_status == "BUDGET_CONSTRAINT" else lead_status
         lead_email = details.get('FIELDS', {}).get('EMAIL', [{}])[0].get('VALUE', '')
         lead_phone = details.get('FIELDS', {}).get('PHONE', [{}])[0].get('VALUE', '')
         lead_currency = details.get('FIELDS', {}).get('CURRENCY', 'USD')
-        lead_value = details.get('FIELDS', {}).get('AMOUNT', 100.0)  
-    
+        lead_value = details.get('FIELDS', {}).get('AMOUNT', 100.0)
+
         created_time = details.get('FIELDS', {}).get('DATE_CREATE', '')
         if created_time:
             lead_created_time = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")
@@ -67,10 +66,8 @@ def bitrix24_handler(request):
         else:
             lead_created_time = None
 
-
-        print(lead_status,lead_name)
+        print(lead_status, lead_name)
         if lead_id and lead_name:
-            
             conversion_name = get_conversion_action_name(lead_status)
             send_to_google_ads(
                 entity_type="lead",
@@ -88,16 +85,15 @@ def bitrix24_handler(request):
         else:
             print("Incomplete lead data received.")
 
-    
     elif event in ["ONCRMDEALADD", "ONCRMDEALUPDATE"]:
         deal_id = details.get('FIELDS', {}).get('ID')
         deal_name = details.get('FIELDS', {}).get('TITLE', '')
         deal_status = details.get('FIELDS', {}).get('STAGE_ID', '')
-        deal_value = details.get('FIELDS', {}).get('AMOUNT', 100.0)  
+        deal_status = "DEAL_BUDGET_CONSTRAINT" if deal_status == "BUDGET_CONSTRAINT" else deal_status
+        deal_value = details.get('FIELDS', {}).get('AMOUNT', 100.0)
         deal_currency = details.get('FIELDS', {}).get('CURRENCY', 'USD')
 
         if deal_id and deal_name:
-            
             conversion_name = get_conversion_action_name(deal_status)
             send_to_google_ads(
                 entity_type="deal",
@@ -112,7 +108,6 @@ def bitrix24_handler(request):
         else:
             print("Incomplete deal data received.")
 
-    
     elif event in ["ONCRMLEADDELETE"]:
         lead_id = details.get('FIELDS', {}).get('ID')
         if lead_id:
@@ -138,7 +133,6 @@ def bitrix24_handler(request):
     return JsonResponse({"status": "success"})
 
 def get_conversion_action_name(status):
-    
     for conversion_action, stages in CONVERSION_ACTIONS.items():
         if status in stages:
             return conversion_action
@@ -149,9 +143,8 @@ def send_to_google_ads(entity_type, entity_id, entity_name, entity_status=None, 
                        email=None, phone=None, created_time=None):
     client = GoogleAdsClient.load_from_storage(GOOGLE_ADS_CREDENTIALS_FILE)
     customer_id = '583-209-9938'
-    
-    conversion_action_id = '963778520' if conversion_name == "Converted Lead" else 'QUALIFIED_LEAD_CONVERSION_ID'
-    
+    conversion_action_id = '963778520' if conversion_name == "Converted Leads" else 'QUALIFIED_LEAD_CONVERSION_ID'
+
     try:
         conversion = client.get_type('ClickConversion')
         conversion.conversion_action = client.get_service('GoogleAdsService').conversion_action_path(customer_id, conversion_action_id)
@@ -188,7 +181,7 @@ def delete_from_google_ads(entity_type, entity_id, gclid=None):
         conversion = client.get_type('ClickConversion')
         conversion.conversion_action = client.get_service('GoogleAdsService').conversion_action_path(customer_id, conversion_action_id)
         conversion.gclid = gclid
-        conversion.conversion_value = 0.0  
+        conversion.conversion_value = 0.0
         conversion.currency_code = 'USD'
 
         conversion_upload_service = client.get_service('ConversionUploadService')
